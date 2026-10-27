@@ -1,0 +1,50 @@
+.idea/
+.DS_Store
+Thumbs.db
+
+# Dependencies and package manager caches
+node_modules/
+.npm-cache/
+.npm/
+.yarn/cache/
+.pnpm-store/
+
+# Build output and caches
+dist/
+build/
+.vite/
+.cache/
+*.tsbuildinfo
+
+# Local environment (keep shareable templates)
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.local
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.swp
+*~
+
+# Tests, fixtures, configuration, and reports
+test/
+tests/
+__tests__/
+__mocks__/
+*.test.*
+*.spec.*
+playwright.config.*
+vitest.config.*
+jest.config.*
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+playwright/.cache/
+blob-report/
+.test-media/
