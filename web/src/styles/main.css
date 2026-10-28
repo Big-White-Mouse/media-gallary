@@ -231,3 +231,26 @@ dialog { margin: 0; color: var(--text); height: 100dvh; }
 .toast { position: fixed; bottom: 32px; left: 50%; z-index: 20; padding: 12px 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); white-space: nowrap; transform: translateX(-50%); }
 @media (max-width: 520px) { .viewer-nav { display: none; } }
 @media (prefers-reduced-motion: reduce) { .card, .folder-card { transition: none; } }
+
+.media-frame, .image-host { width: 100%; height: 100%; min-width: 0; min-height: 0; }
+button { touch-action: manipulation; }
+.media-frame { position: relative; overflow: hidden; background: #101318; contain: layout paint; }
+.image-host { display: grid; place-items: center; }
+.image-placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 12px; pointer-events: none; }
+.image-retry { position: absolute; bottom: 12px; left: 12px; z-index: 2; padding: 8px; border-radius: 8px; background: #272c36; color: #fff; cursor: pointer; font-size: 12px; }
+.viewer-frame { background: transparent; }
+.viewer-frame .image-host { overflow: visible; }
+.viewer-frame .viewer-image { width: 100%; height: 100%; max-width: 100%; max-height: 100%; object-fit: contain; }
+#breadcrumbs { flex: 1; }
+.loading-bar { position: fixed; top: 72px; left: 50%; z-index: 12; transform: translateX(-50%); border-radius: 8px; padding: 6px 14px; background: var(--panel); color: var(--muted); font-size: 12px; pointer-events: none; }
+.load-error { padding: 12px; margin-bottom: 12px; border: 1px solid #784535; border-radius: 10px; }
+.cache-panel { margin: auto; padding: 24px; width: min(720px, 94vw); height: auto; max-height: 90dvh; overflow: auto; border: 1px solid var(--border); border-radius: 16px; background: var(--bg); }
+.cache-panel::backdrop { background: #0009; }
+.cache-panel p, .cache-locations { color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
+.cache-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cache-heading h2 { margin: 0; font-size: 20px; }
+.cache-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.cache-panel input { width: 100px; padding: 8px; margin: 0 8px; color: var(--text); background: var(--panel); border: 1px solid var(--border); }
+@keyframes viewer-open { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: scale(1); } }
+#dialog { animation: viewer-open .16s ease-out; }
+@media (prefers-reduced-motion: reduce) { #dialog { animation: none; } }

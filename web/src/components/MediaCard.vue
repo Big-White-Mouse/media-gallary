@@ -1,13 +1,15 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue';
-const props = defineProps({ item: { type: Object, required: true }, type: { type: String, required: true } });
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import MediaFrame from './MediaFrame.vue';
+const props = defineProps({ item: { type: Object, required: true }, type: { type: String, required: true }, paused: Boolean });
 defineEmits(['open']);
 const thumbnail = ref(null);
 let observer;
+let visible = false;
 
 function loadThumbnail() {
   const video = thumbnail.value;
-  if (!video || video.getAttribute('src')) return;
+  if (props.paused || !video || video.getAttribute('src')) return;
   video.src = props.item.url;
   video.load();
 }
@@ -28,12 +30,14 @@ onMounted(() => {
   if (props.type !== 'video') return;
   if ('IntersectionObserver' in window) {
     observer = new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
       if (entry.isIntersecting) loadThumbnail();
       else releaseThumbnail();
     }, { rootMargin: '240px 0px', threshold: 0.01 });
     observer.observe(thumbnail.value);
   } else loadThumbnail();
 });
+watch(() => props.paused, paused => { if (paused) releaseThumbnail(); else if (visible) loadThumbnail(); });
 onBeforeUnmount(() => { observer?.disconnect(); releaseThumbnail(); });
 </script>
 
@@ -47,7 +51,7 @@ onBeforeUnmount(() => { observer?.disconnect(); releaseThumbnail(); });
         <path fill="#f3cc7a" d="M5 25h54v24a6 6 0 0 1-6 6H11a6 6 0 0 1-6-6V25Z" />
       </svg>
     </span>
-    <img v-else-if="type === 'image'" class="thumb" :src="item.url" :alt="item.name" loading="lazy" decoding="async">
+    <MediaFrame v-else-if="type === 'image'" :item="item" :enabled="!paused" />
     <template v-else>
       <video ref="thumbnail" class="thumb" muted playsinline preload="metadata" aria-hidden="true" @loadedmetadata="seekThumbnail" />
       <span class="play-badge" aria-hidden="true">▶</span>

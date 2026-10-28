@@ -6,12 +6,14 @@ export function useGallery() {
   const currentPath = ref('');
   const listing = shallowRef({ folders: [], images: [], videos: [] });
   const loading = ref(true);
+  const hasListing = ref(false);
   const error = ref('');
   const notice = ref('');
   const preview = shallowRef(null);
   let controller;
   let noticeTimer;
   let requestedPath = '';
+  const snapshots = new Map();
 
   const breadcrumbs = computed(() => {
     const parts = currentPath.value.split('/').filter(Boolean);
@@ -29,15 +31,19 @@ export function useGallery() {
     }, '', url);
   }
 
-  async function loadDirectory(path) {
+  async function loadDirectory(path, reuse = true) {
     controller?.abort();
     const request = new AbortController();
     controller = request;
     requestedPath = normalizePath(path);
+    const target = requestedPath;
+    if (reuse && snapshots.has(target)) {
+      listing.value = snapshots.get(target); currentPath.value = target; hasListing.value = true;
+    }
     loading.value = true;
     error.value = '';
     try {
-      const response = await fetch(`/api/browse?path=${encodeURIComponent(requestedPath)}`, {
+      const response = await fetch(`/api/browse?${reuse ? '' : 'refresh=1&'}path=${encodeURIComponent(requestedPath)}`, {
         cache: 'no-store', signal: request.signal,
       });
       if (!response.ok) {
@@ -48,6 +54,9 @@ export function useGallery() {
       if (request.signal.aborted) return false;
       currentPath.value = normalizePath(data.currentPath);
       listing.value = { folders: data.folders, images: data.images, videos: data.videos || [] };
+      hasListing.value = true;
+      snapshots.delete(target); snapshots.set(target, listing.value);
+      while (snapshots.size > 5) snapshots.delete(snapshots.keys().next().value);
       return true;
     } catch (cause) {
       if (!request.signal.aborted) error.value = cause.message || '加载失败，请重试';
@@ -67,7 +76,7 @@ export function useGallery() {
   }
 
   async function refresh() {
-    if (await loadDirectory(error.value ? requestedPath : currentPath.value)) saveHistory(true);
+    if (await loadDirectory(error.value ? requestedPath : currentPath.value, false)) saveHistory(true);
   }
 
   function openPreview(type, item) {
@@ -82,7 +91,7 @@ export function useGallery() {
   }
 
   function closePreview() {
-    if (preview.value) history.back();
+    if (preview.value) { preview.value = null; history.back(); }
   }
 
   function restorePreview(value) {
@@ -131,6 +140,6 @@ export function useGallery() {
     window.removeEventListener('popstate', onPopState);
   });
 
-  return { currentPath, listing, breadcrumbs, loading, error, notice, preview,
+  return { currentPath, listing, breadcrumbs, loading, hasListing, error, notice, preview,
     navigate, refresh, openPreview, updateImage, closePreview };
 }

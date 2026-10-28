@@ -1,145 +1,165 @@
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { nextTick, onBeforeUnmount, ref } from 'vue';
 
+// Pointer samples stay outside Vue. Only gesture boundaries notify the renderer.
 export function useImageGestures(stage, currentImage, canSlide, onSlide) {
-  const zoom = ref(1), panX = ref(0), panY = ref(0);
-  const offset = ref('translate3d(-100%, 0, 0)');
-  const trackTransition = ref('none'), zoomTransition = ref('none');
+  const busy = ref(false);
   const pointers = new Map();
-  let gesture, lastTap, slideTimer;
-  let sliding = false;
-  const trackStyle = computed(() => ({ transform: offset.value, transition: trackTransition.value }));
-  const imageStyle = computed(() => ({
-    transform: `translate3d(${panX.value}px, ${panY.value}px, 0) scale(${zoom.value})`,
-    transition: zoomTransition.value,
-  }));
-
+  let zoom = 1, panX = 0, panY = 0, offset = 0, width = 1, height = 1, imageWidth = 1, imageHeight = 1;
+  let gesture, lastTap, pendingPoint, frame = 0, timer, animationId = 0, sliding = false, completeTransition;
+  let trackTransition = 'none', zoomTransition = 'none';
+  const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const track = () => stage.value?.querySelector('#viewer-track');
+  function paint() {
+    frame = 0;
+    applySample();
+    const element = track();
+    if (element) {
+      element.style.transition = trackTransition;
+      element.style.transform = `translate3d(calc(-100% + ${offset}px), 0, 0)`;
+    }
+    if (currentImage.value) {
+      currentImage.value.style.transition = zoomTransition;
+      currentImage.value.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoom})`;
+    }
+  }
+  function schedule() { if (!frame) frame = requestAnimationFrame(paint); }
+  function bounds() {
+    const maxX = Math.max(0, (imageWidth * zoom - width) / 2);
+    const maxY = Math.max(0, (imageHeight * zoom - height) / 2);
+    panX = Math.max(-maxX, Math.min(maxX, panX));
+    panY = Math.max(-maxY, Math.min(maxY, panY));
+  }
   function clampPan() {
+    const rect = stage.value?.getBoundingClientRect();
+    if (!rect) return;
+    width = rect.width; height = rect.height;
     const image = currentImage.value;
-    const maxX = Math.max(0, (image?.clientWidth || 0) * (zoom.value - 1) / 2);
-    const maxY = Math.max(0, (image?.clientHeight || 0) * (zoom.value - 1) / 2);
-    panX.value = Math.max(-maxX, Math.min(maxX, panX.value));
-    panY.value = Math.max(-maxY, Math.min(maxY, panY.value));
+    const ratio = image?.naturalWidth && image?.naturalHeight ? image.naturalWidth / image.naturalHeight : width / height;
+    imageWidth = Math.min(width, height * ratio); imageHeight = imageWidth / ratio;
+    bounds(); schedule();
+  }
+  function stopTransition() {
+    animationId++; clearTimeout(timer);
+    if (completeTransition) track()?.removeEventListener('transitionend', completeTransition);
+    if (sliding && track()) offset = new DOMMatrixReadOnly(getComputedStyle(track()).transform).m41 + width;
+    sliding = false; completeTransition = null; trackTransition = 'none';
   }
   function resetZoom(animate = false) {
-    zoom.value = 1;
-    panX.value = panY.value = 0;
-    zoomTransition.value = animate ? 'transform .22s ease' : 'none';
+    zoom = 1; panX = panY = 0;
+    zoomTransition = animate && !reduced() ? 'transform .2s ease-out' : 'none';
   }
-  function snapTrack() {
-    trackTransition.value = 'transform .22s ease';
-    offset.value = 'translate3d(-100%, 0, 0)';
+  function animateTrack(target, direction = 0) {
+    stopTransition();
+    const token = animationId;
+    sliding = true; busy.value = true;
+    // Commit start position before assigning an animated target.
+    paint();
+    requestAnimationFrame(() => {
+      if (token !== animationId || !stage.value) return;
+      trackTransition = reduced() ? 'none' : 'transform .22s cubic-bezier(.2,.75,.25,1)';
+      offset = target; paint();
+      let finished = false;
+      completeTransition = async event => {
+        if (event && (event.target !== track() || event.propertyName !== 'transform')) return;
+        if (finished || token !== animationId) return;
+        finished = true; clearTimeout(timer);
+        track()?.removeEventListener('transitionend', completeTransition);
+        if (direction) { onSlide(direction); await nextTick(); }
+        if (token !== animationId) return;
+        sliding = false; offset = 0; trackTransition = 'none'; busy.value = false; paint();
+      };
+      track()?.addEventListener('transitionend', completeTransition);
+      timer = setTimeout(() => completeTransition?.(), reduced() ? 0 : 300);
+    });
   }
   function slide(direction) {
-    if (sliding) return;
-    if (!canSlide.value) { snapTrack(); return; }
-    sliding = true;
-    gesture = null;
-    lastTap = null;
-    resetZoom();
-    trackTransition.value = 'transform .24s ease';
-    offset.value = `translate3d(${direction > 0 ? -200 : 0}%, 0, 0)`;
-    slideTimer = setTimeout(() => {
-      onSlide(direction);
-      trackTransition.value = 'none';
-      offset.value = 'translate3d(-100%, 0, 0)';
-      sliding = false;
-    }, 250);
+    if (!canSlide.value) { animateTrack(0); return; }
+    clampPan(); gesture = null; lastTap = null; resetZoom();
+    animateTrack(direction > 0 ? -width : width, direction);
   }
   function toggleZoomAt(x, y) {
-    if (sliding) return;
-    if (zoom.value > 1) { resetZoom(true); return; }
-    const rect = stage.value.getBoundingClientRect();
-    zoom.value = 2.5;
-    panX.value = (rect.left + rect.width / 2 - x) * (zoom.value - 1);
-    panY.value = (rect.top + rect.height / 2 - y) * (zoom.value - 1);
-    zoomTransition.value = 'transform .22s ease';
-    clampPan();
+    if (zoom > 1) resetZoom(true);
+    else {
+      const rect = stage.value.getBoundingClientRect();
+      zoom = 2.5;
+      panX = (rect.left + rect.width / 2 - x) * (zoom - 1);
+      panY = (rect.top + rect.height / 2 - y) * (zoom - 1);
+      zoomTransition = reduced() ? 'none' : 'transform .2s ease-out';
+      bounds();
+    }
+    schedule();
   }
   const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-  function beginGesture(moved = false) {
+  function begin(moved = false) {
     const points = [...pointers.values()];
     if (points.length >= 2) {
-      const [a, b] = points;
-      const rect = stage.value.getBoundingClientRect();
-      gesture = {
-        type: 'pinch', startDistance: Math.max(1, distance(a, b)), startZoom: zoom.value,
-        startPanX: panX.value, startPanY: panY.value,
-        focalX: (a.x + b.x) / 2 - (rect.left + rect.width / 2),
-        focalY: (a.y + b.y) / 2 - (rect.top + rect.height / 2),
-      };
-      lastTap = null;
-      offset.value = 'translate3d(-100%, 0, 0)';
-    } else if (points.length === 1) {
-      gesture = {
-        type: 'drag', startX: points[0].x, startY: points[0].y,
-        startPanX: panX.value, startPanY: panY.value, startedAt: Date.now(), moved,
-      };
-    } else gesture = null;
-    trackTransition.value = 'none';
-    zoomTransition.value = 'none';
+      const [a, b] = points, rect = stage.value.getBoundingClientRect();
+      gesture = { type: 'pinch', distance: Math.max(1, distance(a, b)), zoom, panX, panY,
+        focalX: (a.x + b.x) / 2 - rect.left - width / 2, focalY: (a.y + b.y) / 2 - rect.top - height / 2 };
+      lastTap = null; offset = 0;
+    } else if (points.length) gesture = { type: 'drag', x: points[0].x, y: points[0].y, panX, panY, offset, started: performance.now(), moved };
+    else gesture = null;
+    trackTransition = zoomTransition = 'none';
   }
   function pointerDown(event) {
-    if (sliding || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (event.target.closest('[role=button],button')) return;
+    clampPan(); stopTransition(); busy.value = true;
     stage.value.setPointerCapture(event.pointerId);
-    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    beginGesture();
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY }); begin();
   }
   function pointerMove(event) {
-    if (!pointers.has(event.pointerId) || !gesture || sliding) return;
+    if (!pointers.has(event.pointerId) || !gesture) return;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    pendingPoint = { x: event.clientX, y: event.clientY };
+    schedule();
+  }
+  function applySample() {
+    if (!pendingPoint || !gesture) { pendingPoint = null; return; }
+    const point = pendingPoint; pendingPoint = null;
     if (gesture.type === 'pinch') {
-      const [a, b] = [...pointers.values()];
-      if (!b) return;
-      zoom.value = Math.max(1, Math.min(5, gesture.startZoom * distance(a, b) / gesture.startDistance));
-      const ratio = zoom.value / gesture.startZoom;
-      panX.value = gesture.focalX + (gesture.startPanX - gesture.focalX) * ratio;
-      panY.value = gesture.focalY + (gesture.startPanY - gesture.focalY) * ratio;
-      clampPan();
-      return;
+      const [a, b] = [...pointers.values()]; if (!b) return;
+      zoom = Math.max(1, Math.min(5, gesture.zoom * distance(a, b) / gesture.distance));
+      const ratio = zoom / gesture.zoom;
+      panX = gesture.focalX + (gesture.panX - gesture.focalX) * ratio;
+      panY = gesture.focalY + (gesture.panY - gesture.focalY) * ratio; bounds();
+    } else {
+      const dx = point.x - gesture.x, dy = point.y - gesture.y;
+      gesture.moved ||= Math.hypot(dx, dy) > 8;
+      if (zoom > 1) { panX = gesture.panX + dx; panY = gesture.panY + dy; bounds(); }
+      else offset = gesture.offset + dx;
     }
-    const dx = event.clientX - gesture.startX, dy = event.clientY - gesture.startY;
-    gesture.moved ||= Math.hypot(dx, dy) > 8;
-    if (zoom.value > 1) {
-      panX.value = gesture.startPanX + dx;
-      panY.value = gesture.startPanY + dy;
-      clampPan();
-    } else offset.value = `translate3d(calc(-100% + ${dx}px), 0, 0)`;
   }
   function pointerUp(event) {
     if (!pointers.has(event.pointerId)) return;
+    applySample();
     pointers.delete(event.pointerId);
-    if (!gesture || sliding) return;
-    if (gesture.type === 'pinch' || pointers.size) { beginGesture(true); return; }
-    const dx = event.clientX - gesture.startX, dy = event.clientY - gesture.startY;
-    const duration = Date.now() - gesture.startedAt;
-    const wasTap = !gesture.moved && Math.hypot(dx, dy) < 8 && duration < 280;
-    if (zoom.value === 1) {
-      const threshold = Math.min(100, stage.value.clientWidth * 0.2);
-      if (Math.abs(dx) > Math.abs(dy) && (Math.abs(dx) > threshold || (duration < 300 && Math.abs(dx) > 28))) {
-        slide(dx < 0 ? 1 : -1);
-      } else snapTrack();
-    }
-    if (wasTap && event.pointerType !== 'mouse') {
-      const point = { x: event.clientX, y: event.clientY, time: Date.now() };
-      if (lastTap && point.time - lastTap.time < 320 && distance(point, lastTap) < 36) {
-        toggleZoomAt(point.x, point.y);
-        lastTap = null;
-      } else lastTap = point;
+    if (!gesture) { busy.value = false; return; }
+    if (gesture.type === 'pinch' || pointers.size) { begin(true); busy.value = pointers.size > 0; return; }
+    const dx = event.clientX - gesture.x, dy = event.clientY - gesture.y, duration = performance.now() - gesture.started;
+    const tap = !gesture.moved && Math.hypot(dx, dy) < 8 && duration < 280;
+    if (zoom === 1) {
+      if (Math.abs(offset) > Math.abs(dy) && (Math.abs(offset) > Math.min(100, width * .2) || (duration < 300 && Math.abs(offset) > 28))) slide(offset < 0 ? 1 : -1);
+      else if (Math.abs(offset) > 0) animateTrack(0);
+      else busy.value = false;
+    } else busy.value = false;
+    if (tap && event.pointerType !== 'mouse') {
+      const point = { x: event.clientX, y: event.clientY, time: performance.now() };
+      if (lastTap && point.time - lastTap.time < 320 && distance(point, lastTap) < 36) { toggleZoomAt(point.x, point.y); lastTap = null; }
+      else lastTap = point;
     } else lastTap = null;
     gesture = null;
   }
   function pointerCancel(event) {
-    if (!pointers.has(event.pointerId)) return;
-    pointers.delete(event.pointerId);
-    if (!sliding) snapTrack();
-    beginGesture(true);
+    if (!pointers.delete(event.pointerId)) return;
     lastTap = null;
+    if (pointers.size) begin(true);
+    else { gesture = null; if (offset) animateTrack(0); else busy.value = false; }
   }
   function doubleClick(event) {
-    // Touch double taps are handled above, avoiding the synthetic dblclick.
     if (event.pointerType === 'touch' || event.sourceCapabilities?.firesTouchEvents) return;
-    toggleZoomAt(event.clientX, event.clientY);
+    clampPan(); toggleZoomAt(event.clientX, event.clientY);
   }
-  onBeforeUnmount(() => { clearTimeout(slideTimer); pointers.clear(); });
-  return { trackStyle, imageStyle, slide, clampPan, pointerDown, pointerMove, pointerUp, pointerCancel, doubleClick };
+  onBeforeUnmount(() => { stopTransition(); cancelAnimationFrame(frame); pointers.clear(); });
+  return { busy, slide, clampPan, pointerDown, pointerMove, pointerUp, pointerCancel, doubleClick };
 }

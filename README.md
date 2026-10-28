@@ -5,7 +5,7 @@
 - [backend/](backend/README.md)：Node.js 资源服务，提供目录接口、图片、视频和 Range 分段读取。
 - [web/](web/README.md)：Vue 3 + Vite 前端，负责目录浏览和媒体预览。
 
-两个项目各自拥有 `package.json`、锁文件、配置及测试。根目录只保留项目说明和公共忽略规则，没有 npm workspace、统一依赖或启动脚本。需要 Node.js 22.12 或更高版本。
+两个项目各自拥有 `package.json`、锁文件及配置。根目录只保留项目说明和公共忽略规则，没有 npm workspace、统一依赖或启动脚本。需要 Node.js 22.12 或更高版本。
 
 ## 启动
 
@@ -38,16 +38,13 @@ backend/
   config.js
   media.js
   server.js
-  tests/
 web/
   package.json
   package-lock.json
   README.md
   vite.config.js
-  playwright.config.js
   index.html
   src/
-  tests/e2e/
   dist/                  前端构建产物（不提交）
 README.md
 .gitignore

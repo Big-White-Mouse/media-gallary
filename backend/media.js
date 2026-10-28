@@ -19,6 +19,9 @@ function isInside(root, candidate) {
 }
 
 export async function resolveResource(root, relativePath = '') {
+  if (relativePath.split(/[\\/]/).some(part => part.toLowerCase() === '.gallery-thumbnails')) {
+    throw Object.assign(new Error('缓存目录不作为媒体公开。'), { code: 'INVALID_PATH' });
+  }
   const candidate = path.resolve(root, relativePath.replaceAll('\\', '/'));
   if (!isInside(root, candidate) || relativePath.includes('\0')) {
     throw Object.assign(new Error('目录路径无效。'), { code: 'INVALID_PATH' });
@@ -41,11 +44,16 @@ export async function browseDirectory(root, relativePath = '') {
   const entries = await fs.promises.readdir(currentDirectory, { withFileTypes: true });
   entries.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
   const folders = [], images = [], videos = [];
-  for (const entry of entries) {
+  const results = new Array(entries.length);
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(8, entries.length) }, async () => {
+    while (cursor < entries.length) {
+    const index = cursor++, entry = entries[index];
+    if (entry.name.toLowerCase() === '.gallery-thumbnails') continue;
     const entryPath = path.join(currentDirectory, entry.name);
     const relative = portablePath(path.relative(root, entryPath));
     if (entry.isDirectory()) {
-      folders.push({ name: entry.name, path: relative });
+      results[index] = { type: 'folder', item: { name: entry.name, path: relative } };
       continue;
     }
     const extension = path.extname(entry.name).toLowerCase();
@@ -54,10 +62,17 @@ export async function browseDirectory(root, relativePath = '') {
     try { stat = await fs.promises.stat(entryPath); }
     catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     const isImage = IMAGE_TYPES.has(extension);
-    (isImage ? images : videos).push({
+    const encoded = relative.split('/').map(encodeURIComponent).join('/');
+    const revision = `${stat.size}-${stat.mtimeMs}`;
+    results[index] = { type: isImage ? 'image' : 'video', item: {
       name: entry.name, path: relative, size: stat.size, modified: stat.mtimeMs,
-      url: `/${isImage ? 'image' : 'video'}/${relative.split('/').map(encodeURIComponent).join('/')}`,
-    });
+      url: `/${isImage ? 'image' : 'video'}/${encoded}?v=${revision}`,
+      ...(isImage ? { thumbnailUrl: `/thumbnail/${encoded}?v=${revision}` } : {}),
+    } };
+    }
+  }));
+  for (const result of results) {
+    if (result) (result.type === 'folder' ? folders : result.type === 'image' ? images : videos).push(result.item);
   }
   return { directory: root, currentPath: portablePath(path.relative(root, currentDirectory)), folders, images, videos };
 }
@@ -84,9 +99,13 @@ export async function serveMedia(request, response, root, urlPath, prefix, types
     const stat = await file.stat();
     if (!stat.isFile()) { await file.close(); response.writeHead(404).end('Not found'); return; }
     const headers = {
-      'Content-Type': mimeType, 'Cache-Control': 'public, max-age=3600',
+      'Content-Type': mimeType, 'Cache-Control': 'public, max-age=0, must-revalidate',
       'X-Content-Type-Options': 'nosniff', 'Accept-Ranges': 'bytes',
+      ETag: `"${stat.size}-${stat.mtimeMs}"`, 'Last-Modified': stat.mtime.toUTCString(),
     };
+    if (request.headers['if-none-match'] === headers.ETag && !request.headers.range) {
+      await file.close(); response.writeHead(304, headers).end(); return;
+    }
     let range;
     if (request.headers.range) {
       range = parseRange(request.headers.range, stat.size);

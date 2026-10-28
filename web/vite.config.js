@@ -3,7 +3,7 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 
 export function resourceProxy(target = process.env.GALLERY_API_URL || 'http://127.0.0.1:8080') {
-  return Object.fromEntries(['/api', '/image', '/video'].map((prefix) => [prefix, { target }]));
+  return Object.fromEntries(['/api', '/image', '/video', '/thumbnail'].map((prefix) => [prefix, { target }]));
 }
 
 export default defineConfig({

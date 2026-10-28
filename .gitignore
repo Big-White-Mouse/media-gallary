@@ -48,3 +48,5 @@ playwright-report/
 playwright/.cache/
 blob-report/
 .test-media/
+
+.gallery-thumbnails/
